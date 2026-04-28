@@ -1,7 +1,6 @@
 import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ResidualPatchDenoiser(nn.Module):
@@ -71,16 +70,6 @@ class ResidualPatchDenoiser(nn.Module):
     def _get_pad_len(self, length):
         """
         Compute right padding so that unfold covers the full sequence.
-
-        Need:
-            last_start + patch_len >= length
-
-        For unfold with step=stride, number of patches is:
-            N = ceil((length - patch_len) / stride) + 1, if length > patch_len
-            N = 1, if length <= patch_len
-
-        padded length:
-            (N - 1) * stride + patch_len
         """
         if length <= self.patch_len:
             padded_len = self.patch_len
@@ -101,8 +90,11 @@ class ResidualPatchDenoiser(nn.Module):
         pad_len = self._get_pad_len(length)
 
         if pad_len > 0:
-            # Replicate-pad the tail to avoid introducing artificial zeros.
-            x = F.pad(x, (0, pad_len), mode="replicate")
+            # Manual replicate padding for 2D tensors.
+            # F.pad(..., mode="replicate") does not support 2D tensors in
+            # some PyTorch versions.
+            tail = x[:, -1:].repeat(1, pad_len)
+            x = torch.cat([x, tail], dim=-1)
 
         patches = x.unfold(dimension=-1, size=self.patch_len, step=self.stride)
 
@@ -161,7 +153,6 @@ class ResidualPatchDenoiser(nn.Module):
         r_patches, r_len = self.patchify(r)
         base_patches, base_len = self.patchify(base)
 
-        # Safety check: r_t and y_base should have the same pred_len.
         if r_patches.shape[1] != base_patches.shape[1]:
             raise RuntimeError(
                 f"Patch number mismatch: r_patches has {r_patches.shape[1]} patches, "
@@ -174,7 +165,6 @@ class ResidualPatchDenoiser(nn.Module):
         base_tokens = self.base_patch_embed(base_patches)
 
         # t should be [B].
-        # During sampling, diffusion_utils.py should expand t to [B].
         if t.dim() == 0:
             t = t.repeat(B)
 
