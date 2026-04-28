@@ -77,6 +77,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--stride', type=int, default=8,
                         help='patch stride for residual patch denoiser')
+    parser.add_argument("--sample_temperature",type=float,default=1.0,help="temperature for residual diffusion sampling noise",)
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=4, help='data loader num workers')
