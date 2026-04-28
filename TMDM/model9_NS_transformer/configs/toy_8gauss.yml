@@ -70,7 +70,7 @@ testing:
     plot_freq: 200
     image_folder: 'testing_image_samples'
     n_z_samples: 100 #1000
-    n_z_samples_depart: 1 #1000
+    n_z_samples_depart: 10 #1000
     n_bins: 10
 
     compute_metric_all_steps: True
