@@ -436,6 +436,10 @@ class Exp_Main(Exp_Basic):
         preds = []
         trues = []
 
+        # New: collect y_base point predictions.
+        ybase_preds = []
+        ybase_trues = []
+
         folder_path = "./test_results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -523,6 +527,11 @@ class Exp_Main(Exp_Basic):
                 outputs = outputs[:, :, :, f_dim:]
                 batch_y_eval = batch_y[:, -self.args.pred_len:, f_dim:].detach().cpu().numpy()
 
+                # New: y_base point forecast, without residual diffusion sampling.
+                y_base_eval = y_base[:, -self.args.pred_len:, f_dim:].detach().cpu().numpy()
+                ybase_preds.append(y_base_eval)
+                ybase_trues.append(batch_y_eval)
+
                 preds.append(outputs)
                 trues.append(batch_y_eval)
 
@@ -540,6 +549,10 @@ class Exp_Main(Exp_Basic):
         preds = np.array(preds)
         trues = np.array(trues)
 
+        # New: convert y_base results to arrays.
+        ybase_preds = np.array(ybase_preds)
+        ybase_trues = np.array(ybase_trues)
+
         preds_save = np.array(preds)
         trues_save = np.array(trues)
 
@@ -551,6 +564,20 @@ class Exp_Main(Exp_Basic):
         trues_ns = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
 
         print("test shape:", preds_ns.shape, trues_ns.shape)
+
+        # New: reshape y_base point predictions to [N, pred_len, C].
+        ybase_preds_ns = ybase_preds.reshape(
+            -1,
+            ybase_preds.shape[-2],
+            ybase_preds.shape[-1],
+        )
+        ybase_trues_ns = ybase_trues.reshape(
+            -1,
+            ybase_trues.shape[-2],
+            ybase_trues.shape[-1],
+        )
+
+        print("y_base test shape:", ybase_preds_ns.shape, ybase_trues_ns.shape)
 
         folder_path = "./results/" + setting + "/"
         if not os.path.exists(folder_path):
@@ -565,6 +592,22 @@ class Exp_Main(Exp_Basic):
                 rmse,
                 mape,
                 mspe,
+            )
+        )
+
+        # New: y_base point prediction metrics.
+        ybase_mae, ybase_mse, ybase_rmse, ybase_mape, ybase_mspe = metric(
+            ybase_preds_ns,
+            ybase_trues_ns,
+        )
+
+        print(
+            "YBase point metrc: mse:{:.4f}, mae:{:.4f} , rmse:{:.4f}, mape:{:.4f}, mspe:{:.4f}".format(
+                ybase_mse,
+                ybase_mae,
+                ybase_rmse,
+                ybase_mape,
+                ybase_mspe,
             )
         )
 
@@ -649,6 +692,8 @@ class Exp_Main(Exp_Basic):
         f = open("result.txt", "a")
         f.write(setting + "  \n")
         f.write("mse:{}, mae:{}".format(mse, mae))
+        f.write("\n")
+        f.write("ybase_mse:{}, ybase_mae:{}".format(ybase_mse, ybase_mae))
         f.write("\n\n")
         f.close()
 
@@ -672,6 +717,22 @@ class Exp_Main(Exp_Basic):
         np.save(folder_path + "pred.npy", preds_save)
         np.save(folder_path + "true.npy", trues_save)
 
+        # New: save y_base point prediction results.
+        np.save(
+            folder_path + "ybase_metrics.npy",
+            np.array(
+                [
+                    ybase_mse,
+                    ybase_mae,
+                    ybase_rmse,
+                    ybase_mape,
+                    ybase_mspe,
+                ]
+            ),
+        )
+        np.save(folder_path + "ybase_pred.npy", ybase_preds)
+        np.save(folder_path + "ybase_true.npy", ybase_trues)
+
         np.save("./results/{}.npy".format(self.args.model_id), np.array(mse))
 
         np.save(
@@ -687,6 +748,21 @@ class Exp_Main(Exp_Basic):
                     coverage * 100,
                     CRPS_0,
                     CRPS_sum,
+                ]
+            ),
+        )
+
+        # New: compact y_base metric files.
+        np.save("./results/{}_ybase.npy".format(self.args.model_id), np.array(ybase_mse))
+        np.save(
+            "./results/{}_ybase_metrics.npy".format(self.args.model_id),
+            np.array(
+                [
+                    ybase_mse,
+                    ybase_mae,
+                    ybase_rmse,
+                    ybase_mape,
+                    ybase_mspe,
                 ]
             ),
         )
