@@ -11,6 +11,7 @@ from model9_NS_transformer.diffusion_models.diffusion_utils import (
     q_sample_residual,
     p_sample_loop_residual,
 )
+from model9_NS_transformer.diffusion_models.sample_aggregation import aggregate_samples
 
 import math
 import numpy as np
@@ -112,6 +113,30 @@ class Exp_Main(Exp_Basic):
         ).to(self.device)
         t = torch.cat([t, self.model.num_timesteps - 1 - t], dim=0)[:batch_size]
         return t
+
+    def _aggregate_point_forecast(self, samples):
+        """
+        Aggregate generated samples for point forecasting metrics.
+
+        samples:
+            np.ndarray, shape [B, S, L, C]
+
+        Default method is mean, which recovers original TMDM-r behavior.
+        """
+        method = getattr(self.args, "point_agg", "mean")
+        trim_ratio = getattr(self.args, "trim_ratio", 0.1)
+        mom_groups = getattr(self.args, "mom_groups", 5)
+        mom_repeats = getattr(self.args, "mom_repeats", 3)
+        seed = getattr(self.args, "seed", None)
+
+        return aggregate_samples(
+            samples,
+            method=method,
+            trim_ratio=trim_ratio,
+            mom_groups=mom_groups,
+            mom_repeats=mom_repeats,
+            seed=seed,
+        )
 
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
@@ -326,7 +351,7 @@ class Exp_Main(Exp_Basic):
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
 
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(vali_data, vali_loader, criterion)
+            vali_loss = self.vali(train_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
@@ -556,13 +581,28 @@ class Exp_Main(Exp_Basic):
         preds_save = np.array(preds)
         trues_save = np.array(trues)
 
-        preds_ns = np.array(preds).mean(axis=2)
+        # Original:
+        #     preds_ns = np.array(preds).mean(axis=2)
+        #
+        # New:
+        #     aggregate over sample axis with configurable robust aggregation.
+        # preds shape before reshape:
+        #     [num_batches, B, S, L, C]
+        preds_for_agg = preds.reshape(
+            -1,
+            preds.shape[-3],
+            preds.shape[-2],
+            preds.shape[-1],
+        )  # [N, S, L, C]
 
-        print("test shape:", preds_ns.shape, trues.shape)
+        preds_ns = self._aggregate_point_forecast(preds_for_agg)  # [N, L, C]
 
-        preds_ns = preds_ns.reshape(-1, preds_ns.shape[-2], preds_ns.shape[-1])
         trues_ns = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
 
+        print(
+            "point aggregation method:",
+            getattr(self.args, "point_agg", "mean"),
+        )
         print("test shape:", preds_ns.shape, trues_ns.shape)
 
         # New: reshape y_base point predictions to [N, pred_len, C].
@@ -611,6 +651,8 @@ class Exp_Main(Exp_Basic):
             )
         )
 
+        # Probabilistic metrics still use all generated samples.
+        # Do not use MoM/trimmed/median here.
         preds_flat = preds.reshape(-1, preds.shape[-3], preds.shape[-2] * preds.shape[-1])
         preds_flat = preds_flat.transpose(0, 2, 1)
         preds_flat = preds_flat.reshape(-1, preds_flat.shape[-1])
@@ -691,7 +733,13 @@ class Exp_Main(Exp_Basic):
 
         f = open("result.txt", "a")
         f.write(setting + "  \n")
-        f.write("mse:{}, mae:{}".format(mse, mae))
+        f.write(
+            "point_agg:{}, mse:{}, mae:{}".format(
+                getattr(self.args, "point_agg", "mean"),
+                mse,
+                mae,
+            )
+        )
         f.write("\n")
         f.write("ybase_mse:{}, ybase_mae:{}".format(ybase_mse, ybase_mae))
         f.write("\n\n")
@@ -716,6 +764,7 @@ class Exp_Main(Exp_Basic):
 
         np.save(folder_path + "pred.npy", preds_save)
         np.save(folder_path + "true.npy", trues_save)
+        np.save(folder_path + "point_pred.npy", preds_ns)
 
         # New: save y_base point prediction results.
         np.save(
